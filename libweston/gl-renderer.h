@@ -121,5 +121,7 @@ struct gl_renderer_interface {
 	int (*create_fence_fd)(struct weston_output *output);
 
 	void (*print_egl_error_state)(void);
+
+	int (*sync_post)(struct weston_compositor *ec);
 };
 

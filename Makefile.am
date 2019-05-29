@@ -188,7 +188,11 @@ nodist_libweston_@LIBWESTON_MAJOR@_la_SOURCES =				\
 	protocol/weston-touch-calibration-protocol.c			\
 	protocol/weston-touch-calibration-server-protocol.h		\
 	protocol/linux-explicit-synchronization-unstable-v1-protocol.c	\
-	protocol/linux-explicit-synchronization-unstable-v1-server-protocol.h
+	protocol/linux-explicit-synchronization-unstable-v1-server-protocol.h \
+	protocol/alpha-compositing-unstable-v1-protocol.c		\
+	protocol/alpha-compositing-unstable-v1-server-protocol.h\
+	protocol/hdr10-metadata-unstable-v1-protocol.c			\
+	protocol/hdr10-metadata-unstable-v1-server-protocol.h
 
 BUILT_SOURCES += $(nodist_libweston_@LIBWESTON_MAJOR@_la_SOURCES)
 
@@ -333,16 +337,18 @@ westoninclude_HEADERS +=				\
 	ivi-shell/ivi-layout-export.h
 endif
 
-if ENABLE_EGL
+if ENABLE_OPENGL
 libweston_module_LTLIBRARIES += gl-renderer.la
 gl_renderer_la_LDFLAGS = -module -avoid-version
 gl_renderer_la_LIBADD =				\
 	libweston-@LIBWESTON_MAJOR@.la		\
 	$(EGL_LIBS)				\
+	$(OPENGL_LIBS)				\
 	$(COMPOSITOR_LIBS)
 gl_renderer_la_CFLAGS =				\
 	$(COMPOSITOR_CFLAGS)			\
 	$(EGL_CFLAGS)				\
+	$(GL_RENDERER_CFLAGS)			\
 	$(LIBDRM_CFLAGS)			\
 	$(AM_CFLAGS)
 gl_renderer_la_SOURCES =			\
@@ -354,6 +360,29 @@ gl_renderer_la_SOURCES =			\
 	libweston/linux-sync-file.h		\
 	libweston/linux-sync-file-uapi.h	\
 	shared/helpers.h
+endif
+
+if ENABLE_IMXG2D
+libweston_module_LTLIBRARIES += g2d-renderer.la
+g2d_renderer_la_LDFLAGS = -module -avoid-version
+g2d_renderer_la_LIBADD = 			\
+	libweston-@LIBWESTON_MAJOR@.la		\
+	$(EGL_LIBS)				\
+	$(COMPOSITOR_LIBS)			\
+	-lg2d
+g2d_renderer_la_CFLAGS =			\
+	$(COMPOSITOR_CFLAGS)			\
+	$(LIBDRM_CFLAGS)			\
+	$(EGL_CFLAGS)				\
+	$(GCC_CFLAGS) -DHAVE_G2D
+g2d_renderer_la_SOURCES =			\
+	libweston/g2d-renderer.h			\
+	libweston/g2d-renderer.c			\
+	libweston/vertex-clipping.c			\
+	libweston/vertex-clipping.h
+if ENABLE_EGL
+g2d_renderer_la_CFLAGS += -DENABLE_EGL
+endif
 endif
 
 if ENABLE_X11_COMPOSITOR
@@ -653,7 +682,14 @@ demo_clients += weston-simple-egl
 weston_simple_egl_SOURCES = clients/simple-egl.c
 nodist_weston_simple_egl_SOURCES =		\
 	protocol/xdg-shell-protocol.c		\
-	protocol/xdg-shell-client-protocol.h
+	protocol/xdg-shell-client-protocol.h \
+	protocol/xdg-shell-unstable-v6-protocol.c		\
+	protocol/xdg-shell-unstable-v6-client-protocol.h	\
+	protocol/alpha-compositing-unstable-v1-protocol.c	\
+	protocol/alpha-compositing-unstable-v1-client-protocol.h	\
+	protocol/ivi-application-protocol.c		\
+	protocol/ivi-application-client-protocol.h
+
 weston_simple_egl_CFLAGS = $(AM_CFLAGS) $(SIMPLE_EGL_CLIENT_CFLAGS)
 weston_simple_egl_LDADD = $(SIMPLE_EGL_CLIENT_LIBS) -lm
 endif
@@ -984,7 +1020,9 @@ BUILT_SOURCES +=					\
 	protocol/xdg-output-unstable-v1-protocol.c			\
 	protocol/xdg-output-unstable-v1-client-protocol.h		\
 	protocol/linux-explicit-synchronization-unstable-v1-protocol.c	\
-	protocol/linux-explicit-synchronization-unstable-v1-client-protocol.h
+	protocol/linux-explicit-synchronization-unstable-v1-client-protocol.h\
+	protocol/alpha-compositing-unstable-v1-protocol.c	\
+	protocol/alpha-compositing-unstable-v1-client-protocol.h
 
 westondatadir = $(datadir)/weston
 dist_westondata_DATA =				\

@@ -715,8 +715,9 @@ weston_touch_start_drag(struct weston_touch *touch,
 
 struct weston_xkb_info {
 	struct xkb_keymap *keymap;
+	int keymap_fd;
 	size_t keymap_size;
-	char *keymap_string;
+	char *keymap_area;
 	int32_t ref_count;
 	xkb_mod_index_t shift_mod;
 	xkb_mod_index_t caps_mod;
@@ -1033,6 +1034,14 @@ struct weston_backend {
 	struct weston_output *
 	(*create_output)(struct weston_compositor *compositor,
 			 const char *name);
+
+	void (*query_dmabuf_formats)(struct weston_compositor* compositor,
+					int **formats, int *num_formats);
+    void (*query_dmabuf_modifiers)(struct weston_compositor *compositor,
+                    int format, uint64_t **modifiers,
+                    int *num_modifiers);
+	bool (*import_dmabuf)(struct weston_compositor* compositor,
+					struct linux_dmabuf_buffer *dmabuf);
 };
 
 /** Callback for saving calibration
@@ -1284,6 +1293,8 @@ struct weston_view {
 
 	pixman_region32_t clip;          /* See weston_view_damage_below() */
 	float alpha;                     /* part of geometry, see below */
+	float blending_alpha;
+	int blending_equation;
 
 	void *renderer_state;
 
@@ -1389,6 +1400,8 @@ struct weston_surface_state {
 
 	/* zwp_surface_synchronization_v1.get_release */
 	struct weston_buffer_release_reference buffer_release_ref;
+	float blending_alpha;
+	int blending_equation;
 };
 
 struct weston_surface_activation_data {
@@ -1470,6 +1483,8 @@ struct weston_surface {
 
 	/* wp_viewport resource for this surface */
 	struct wl_resource *viewport_resource;
+
+	struct wl_resource *blending_resource;
 
 	/* All the pending state, that wl_surface.commit will apply. */
 	struct weston_surface_state pending;

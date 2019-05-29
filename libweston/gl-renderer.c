@@ -51,6 +51,7 @@
 #include "linux-dmabuf-unstable-v1-server-protocol.h"
 #include "linux-explicit-synchronization.h"
 #include "pixel-formats.h"
+#include "alpha-compositing-unstable-v1-server-protocol.h"
 
 #include "shared/fd-util.h"
 #include "shared/helpers.h"
@@ -201,6 +202,7 @@ struct gl_renderer {
 	struct weston_renderer base;
 	int fragment_shader_debug;
 	int fan_debug;
+	int sync_post;
 	struct weston_binding *fragment_binding;
 	struct weston_binding *fan_binding;
 
@@ -861,11 +863,17 @@ shader_uniforms(struct gl_shader *shader,
 	int i;
 	struct gl_surface_state *gs = get_surface_state(view->surface);
 	struct gl_output_state *go = get_output_state(output);
+	float alpha = view->alpha;
+
+	if (view->blending_equation != ZWP_BLENDING_V1_BLENDING_EQUATION_NONE &&
+	    view->blending_equation != ZWP_BLENDING_V1_BLENDING_EQUATION_OPAQUE) {
+		alpha *= view->blending_alpha;
+	}
 
 	glUniformMatrix4fv(shader->proj_uniform,
 			   1, GL_FALSE, go->output_matrix.d);
 	glUniform4fv(shader->color_uniform, 1, gs->color);
-	glUniform1f(shader->alpha_uniform, view->alpha);
+	glUniform1f(shader->alpha_uniform, alpha);
 
 	for (i = 0; i < gs->num_textures; i++)
 		glUniform1i(shader->tex_uniforms[i], i);
@@ -948,6 +956,8 @@ draw_view(struct weston_view *ev, struct weston_output *output,
 	pixman_region32_t repaint;
 	/* opaque region in surface coordinates: */
 	pixman_region32_t surface_opaque;
+	pixman_region32_t surface_opaque_full;
+	pixman_region32_t *surface_opaque_src_ptr;
 	/* non-opaque region in surface coordinates: */
 	pixman_region32_t surface_blend;
 	GLint filter;
@@ -970,7 +980,15 @@ draw_view(struct weston_view *ev, struct weston_output *output,
 	if (ensure_surface_buffer_is_ready(gr, gs) < 0)
 		goto out;
 
-	glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+	if (ev->blending_equation == ZWP_BLENDING_V1_BLENDING_EQUATION_PREMULTIPLIED) {
+		glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+	} else if (ev->blending_equation == ZWP_BLENDING_V1_BLENDING_EQUATION_STRAIGHT) {
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	} else if (ev->blending_equation == ZWP_BLENDING_V1_BLENDING_EQUATION_FROMSOURCE) {
+		glBlendFunc(GL_SRC_ALPHA, GL_SRC_ALPHA);
+	} else {
+		glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+	}
 
 	if (gr->fan_debug) {
 		use_shader(gr, &gr->solid_shader);
@@ -1002,14 +1020,23 @@ draw_view(struct weston_view *ev, struct weston_output *output,
 	pixman_region32_subtract(&surface_blend, &surface_blend,
 				 &ev->surface->opaque);
 
+	if (ev->blending_equation == ZWP_BLENDING_V1_BLENDING_EQUATION_OPAQUE) {
+		pixman_region32_clear(&surface_blend);
+		pixman_region32_init_rect(&surface_opaque_full, 0, 0,
+					  ev->surface->width, ev->surface->height);
+		surface_opaque_src_ptr = &surface_opaque_full;
+	} else {
+		surface_opaque_src_ptr = &ev->surface->opaque;
+	}
+
 	/* XXX: Should we be using ev->transform.opaque here? */
 	pixman_region32_init(&surface_opaque);
 	if (ev->geometry.scissor_enabled)
 		pixman_region32_intersect(&surface_opaque,
-					  &ev->surface->opaque,
+					  surface_opaque_src_ptr,
 					  &ev->geometry.scissor);
 	else
-		pixman_region32_copy(&surface_opaque, &ev->surface->opaque);
+		pixman_region32_copy(&surface_opaque, surface_opaque_src_ptr);
 
 	if (pixman_region32_not_empty(&surface_opaque)) {
 		if (gs->shader == &gr->texture_shader_rgba) {
@@ -2406,7 +2433,20 @@ gl_renderer_attach_dmabuf(struct weston_surface *surface,
 	struct gl_surface_state *gs = get_surface_state(surface);
 	struct dmabuf_image *image;
 	int i;
-	int ret;
+
+	/**
+	 * if backend can handle dmabuf directly, then we only need set
+	 * size to buffer.
+	 * */
+	if (surface->compositor->backend->import_dmabuf) {
+		struct weston_compositor *compositor = surface->compositor;
+		struct weston_backend *backend = surface->compositor->backend;
+		if (backend->import_dmabuf(compositor, dmabuf)){
+			buffer->width = dmabuf->attributes.width;
+			buffer->height = dmabuf->attributes.height;
+			return;
+		}
+	}
 
 	if (!gr->has_dmabuf_import) {
 		linux_dmabuf_buffer_send_server_error(dmabuf,
@@ -2442,16 +2482,6 @@ gl_renderer_attach_dmabuf(struct weston_surface *surface,
 	/* The dmabuf_image should have been created during the import */
 	assert(image != NULL);
 
-	for (i = 0; i < image->num_images; ++i) {
-		ret = egl_image_unref(image->images[i]);
-		assert(ret == 0);
-	}
-
-	if (!import_known_dmabuf(gr, image)) {
-		linux_dmabuf_buffer_send_server_error(dmabuf, "EGL dmabuf import failed");
-		return;
-	}
-
 	gs->num_images = image->num_images;
 	for (i = 0; i < gs->num_images; ++i)
 		gs->images[i] = egl_image_ref(image->images[i]);
@@ -2470,6 +2500,7 @@ gl_renderer_attach_dmabuf(struct weston_surface *surface,
 	gs->buffer_type = BUFFER_TYPE_EGL;
 	gs->y_inverted = buffer->y_inverted;
 	surface->is_opaque = dmabuf_is_opaque(dmabuf);
+	gr->sync_post = 1;
 }
 
 static void
@@ -2721,6 +2752,8 @@ surface_state_handle_surface_destroy(struct wl_listener *listener, void *data)
 			  surface_destroy_listener);
 
 	gr = get_renderer(gs->surface->compositor);
+
+	gr->sync_post = 0;
 
 	surface_state_destroy(gs, gr);
 }
@@ -3651,6 +3684,7 @@ gl_renderer_display_create(struct weston_compositor *ec, EGLenum platform,
 		gl_renderer_surface_get_content_size;
 	gr->base.surface_copy_content = gl_renderer_surface_copy_content;
 	gr->egl_display = NULL;
+	gr->sync_post = 0;
 
 	/* extension_suffix is supported */
 	if (supports) {
@@ -3990,6 +4024,13 @@ gl_renderer_setup(struct weston_compositor *ec, EGLSurface egl_surface)
 	return 0;
 }
 
+static int
+gl_renderer_sync_post(struct weston_compositor * ec)
+{
+	struct gl_renderer *gr = get_renderer(ec);
+	return gr->sync_post;
+}
+
 WL_EXPORT struct gl_renderer_interface gl_renderer_interface = {
 	.opaque_attribs = gl_renderer_opaque_attribs,
 	.alpha_attribs = gl_renderer_alpha_attribs,
@@ -4000,6 +4041,11 @@ WL_EXPORT struct gl_renderer_interface gl_renderer_interface = {
 	.output_destroy = gl_renderer_output_destroy,
 	.output_surface = gl_renderer_output_surface,
 	.output_set_border = gl_renderer_output_set_border,
+<<<<<<< HEAD
 	.create_fence_fd = gl_renderer_create_fence_fd,
 	.print_egl_error_state = gl_renderer_print_egl_error_state
+=======
+	.print_egl_error_state = gl_renderer_print_egl_error_state,
+	.sync_post = gl_renderer_sync_post
+>>>>>>> origin/weston-imx-5.0
 };

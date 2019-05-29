@@ -50,12 +50,22 @@
 #include <gbm.h>
 #include <libudev.h>
 
+#include "compositor/weston.h"
 #include "compositor.h"
 #include "compositor-drm.h"
 #include "weston-debug.h"
 #include "shared/helpers.h"
 #include "shared/timespec-util.h"
+
+#if defined(ENABLE_IMXGPU)
+#if defined(ENABLE_OPENGL)
 #include "gl-renderer.h"
+#endif
+#if defined(ENABLE_IMXG2D)
+#include "g2d-renderer.h"
+#endif
+#endif
+
 #include "weston-egl-ext.h"
 #include "pixman-renderer.h"
 #include "pixel-formats.h"
@@ -66,7 +76,11 @@
 #include "presentation-time-server-protocol.h"
 #include "linux-dmabuf.h"
 #include "linux-dmabuf-unstable-v1-server-protocol.h"
+<<<<<<< HEAD
 #include "linux-explicit-synchronization.h"
+=======
+#include "hdr10-metadata-unstable-v1-server-protocol.h"
+>>>>>>> origin/weston-imx-5.0
 
 #ifndef DRM_CLIENT_CAP_ASPECT_RATIO
 #define DRM_CLIENT_CAP_ASPECT_RATIO	4
@@ -127,6 +141,8 @@
 #define DRM_MODE_FLAG_PIC_AR_MASK (0xF << DRM_MODE_FLAG_PIC_AR_BITS_POS)
 #endif
 
+#define ALIGNTO(a, b) ((a + (b-1)) & (~(b-1)))
+
 /**
  * Represents the values of an enum-type KMS property
  */
@@ -173,6 +189,10 @@ enum wdrm_plane_property {
 	WDRM_PLANE_CRTC_ID,
 	WDRM_PLANE_IN_FORMATS,
 	WDRM_PLANE_IN_FENCE_FD,
+<<<<<<< HEAD
+=======
+	WDRM_PLANE_DTRC_META,
+>>>>>>> origin/weston-imx-5.0
 	WDRM_PLANE__COUNT
 };
 
@@ -216,6 +236,10 @@ static const struct drm_property_info plane_props[] = {
 	[WDRM_PLANE_CRTC_ID] = { .name = "CRTC_ID", },
 	[WDRM_PLANE_IN_FORMATS] = { .name = "IN_FORMATS" },
 	[WDRM_PLANE_IN_FENCE_FD] = { .name = "IN_FENCE_FD" },
+<<<<<<< HEAD
+=======
+	[WDRM_PLANE_DTRC_META] = { .name = "dtrc_table_ofs" },
+>>>>>>> origin/weston-imx-5.0
 };
 
 /**
@@ -225,7 +249,11 @@ enum wdrm_connector_property {
 	WDRM_CONNECTOR_EDID = 0,
 	WDRM_CONNECTOR_DPMS,
 	WDRM_CONNECTOR_CRTC_ID,
+<<<<<<< HEAD
 	WDRM_CONNECTOR_NON_DESKTOP,
+=======
+	WDRM_CONNECTOR_HDR10_METADATA,
+>>>>>>> origin/weston-imx-5.0
 	WDRM_CONNECTOR__COUNT
 };
 
@@ -260,7 +288,11 @@ static const struct drm_property_info connector_props[] = {
 		.num_enum_values = WDRM_DPMS_STATE__COUNT,
 	},
 	[WDRM_CONNECTOR_CRTC_ID] = { .name = "CRTC_ID", },
+<<<<<<< HEAD
 	[WDRM_CONNECTOR_NON_DESKTOP] = { .name = "non-desktop", },
+=======
+	[WDRM_CONNECTOR_HDR10_METADATA] = { .name = "HDR_SOURCE_METADATA", },
+>>>>>>> origin/weston-imx-5.0
 };
 
 /**
@@ -313,6 +345,9 @@ struct drm_backend {
 	struct wl_listener session_listener;
 	uint32_t gbm_format;
 
+	/* hdr10 metadata blob id */
+	unsigned int hdr_blob_id;
+
 	/* we need these parameters in order to not fail drmModeAddFB2()
 	 * due to out of bounds dimensions, and then mistakenly set
 	 * sprites_are_broken:
@@ -336,7 +371,10 @@ struct drm_backend {
 	bool universal_planes;
 	bool atomic_modeset;
 
-	bool use_pixman;
+	int use_pixman;
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_IMXG2D)
+	int use_g2d;
+#endif
 	bool use_pixman_shadow;
 
 	struct udev_input input;
@@ -393,6 +431,8 @@ struct drm_fb {
 
 	/* Used by dumb fbs */
 	void *map;
+
+	uint64_t dtrc_meta;
 };
 
 struct drm_edid {
@@ -499,6 +539,8 @@ struct drm_plane {
 
 	struct wl_list link;
 
+	uint64_t dtrc_meta;
+
 	struct {
 		uint32_t format;
 		uint32_t count_modifiers;
@@ -560,6 +602,9 @@ struct drm_output {
 
 	struct drm_fb *dumb[2];
 	pixman_image_t *image[2];
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_IMXG2D)
+	struct g2d_surfaceEx g2d_image[2];
+#endif
 	int current_image;
 	pixman_region32_t previous_damage;
 
@@ -581,13 +626,23 @@ static const char *const aspect_ratio_as_string[] = {
 	[WESTON_MODE_PIC_AR_256_135] = " 256:135",
 };
 
+<<<<<<< HEAD
 static const char *const drm_output_propose_state_mode_as_string[] = {
 	[DRM_OUTPUT_PROPOSE_STATE_MIXED] = "mixed state",
 	[DRM_OUTPUT_PROPOSE_STATE_RENDERER_ONLY] = "render-only state",
 	[DRM_OUTPUT_PROPOSE_STATE_PLANES_ONLY]	= "plane-only state"
 };
 
+=======
+#if defined(ENABLE_IMXGPU)
+#if defined(ENABLE_OPENGL)
+>>>>>>> origin/weston-imx-5.0
 static struct gl_renderer_interface *gl_renderer;
+#endif
+#if defined(ENABLE_IMXG2D)
+static struct g2d_renderer_interface *g2d_renderer;
+#endif
+#endif
 
 static const char default_seat[] = "seat0";
 
@@ -989,6 +1044,7 @@ drm_fb_addfb(struct drm_backend *b, struct drm_fb *fb)
 	int ret = -EINVAL;
 #ifdef HAVE_DRM_ADDFB2_MODIFIERS
 	uint64_t mods[4] = { };
+	int width, height;
 	size_t i;
 #endif
 
@@ -1000,7 +1056,14 @@ drm_fb_addfb(struct drm_backend *b, struct drm_fb *fb)
 #ifdef HAVE_DRM_ADDFB2_MODIFIERS
 		for (i = 0; i < ARRAY_LENGTH(mods) && fb->handles[i]; i++)
 			mods[i] = fb->modifier;
-		ret = drmModeAddFB2WithModifiers(fb->fd, fb->width, fb->height,
+		if (fb->modifier == DRM_FORMAT_MOD_AMPHION_TILED) {
+			width = ALIGNTO (fb->width, 8);
+			height = ALIGNTO (fb->height, 256);
+		} else {
+			width = fb->width;
+			height = fb->height;
+		}
+		ret = drmModeAddFB2WithModifiers(fb->fd, width, height,
 						 fb->format->format,
 						 fb->handles, fb->strides,
 						 fb->offsets, mods, &fb->fb_id,
@@ -1124,6 +1187,21 @@ drm_fb_destroy_dmabuf(struct drm_fb *fb)
 	drm_fb_destroy(fb);
 }
 
+static void
+drm_close_gem_handle(struct linux_dmabuf_buffer *dmabuf)
+{
+	struct drm_backend *b = to_drm_backend(dmabuf->compositor);
+	int i;
+
+	if (dmabuf->gem_handles[0] != 0) {
+		for (i = 0; i < dmabuf->attributes.n_planes; i++) {
+			struct drm_gem_close arg = { dmabuf->gem_handles[i], };
+			drmIoctl (b->drm.fd, DRM_IOCTL_GEM_CLOSE, &arg);
+			dmabuf->gem_handles[i] = 0;
+		}
+	}
+}
+
 static struct drm_fb *
 drm_fb_get_from_dmabuf(struct linux_dmabuf_buffer *dmabuf,
 		       struct drm_backend *backend, bool is_opaque)
@@ -1144,7 +1222,8 @@ drm_fb_get_from_dmabuf(struct linux_dmabuf_buffer *dmabuf,
 		.num_fds = dmabuf->attributes.n_planes,
 		.modifier = dmabuf->attributes.modifier[0],
 	};
-	int i;
+	int i, ret = -1;
+	uint32_t gem_handle[MAX_DMABUF_PLANES] = {0};
 
 	/* XXX: TODO:
 	 *
@@ -1164,6 +1243,62 @@ drm_fb_get_from_dmabuf(struct linux_dmabuf_buffer *dmabuf,
 
 	fb->refcnt = 1;
 	fb->type = BUFFER_DMABUF;
+	fb->width = dmabuf->attributes.width;
+	fb->height = dmabuf->attributes.height;
+	fb->modifier = dmabuf->attributes.modifier[0];
+	fb->dtrc_meta = dmabuf->attributes.dtrc_meta;
+	fb->size = 0;
+	fb->fd = backend->drm.fd;
+
+	static_assert(ARRAY_LENGTH(fb->strides) ==
+		      ARRAY_LENGTH(dmabuf->attributes.stride),
+		      "drm_fb and dmabuf stride size must match");
+	static_assert(sizeof(fb->strides) == sizeof(dmabuf->attributes.stride),
+		      "drm_fb and dmabuf stride size must match");
+	memcpy(fb->strides, dmabuf->attributes.stride, sizeof(fb->strides));
+	static_assert(ARRAY_LENGTH(fb->offsets) ==
+		      ARRAY_LENGTH(dmabuf->attributes.offset),
+		      "drm_fb and dmabuf offset size must match");
+	static_assert(sizeof(fb->offsets) == sizeof(dmabuf->attributes.offset),
+		      "drm_fb and dmabuf offset size must match");
+	memcpy(fb->offsets, dmabuf->attributes.offset, sizeof(fb->offsets));
+
+	fb->format = pixel_format_get_info(dmabuf->attributes.format);
+	if (!fb->format) {
+		weston_log("couldn't look up format info for 0x%lx\n",
+			   (unsigned long) dmabuf->attributes.format);
+		goto err_free;
+	}
+
+	if (is_opaque)
+		fb->format = pixel_format_get_opaque_substitute(fb->format);
+
+	if (backend->min_width > fb->width ||
+	    fb->width > backend->max_width ||
+	    backend->min_height > fb->height ||
+	    fb->height > backend->max_height) {
+		weston_log("bo geometry out of bounds\n");
+		goto err_free;
+	}
+
+	if (dmabuf->gem_handles[0] == 0) {
+		for (i = 0; i < dmabuf->attributes.n_planes; i++) {
+			int ret;
+			ret = drmPrimeFDToHandle (fb->fd, dmabuf->attributes.fd[i], &gem_handle[i]);
+			if (ret) {
+				weston_log ("got gem_handle %x\n", gem_handle[i]);
+				goto err_free;
+			}
+			fb->handles[i] = dmabuf->gem_handles[i] = gem_handle[i];
+		}
+		linux_dmabuf_buffer_gem_handle_close_cb (dmabuf, drm_close_gem_handle);
+	} else {
+		for (i = 0; i < dmabuf->attributes.n_planes; i++)
+			fb->handles[i] = dmabuf->gem_handles[i];
+	}
+
+	if (fb->handles[0] != 0)
+		goto add_fb;
 
 	static_assert(ARRAY_LENGTH(import_mod.fds) ==
 		      ARRAY_LENGTH(dmabuf->attributes.fd),
@@ -1207,6 +1342,7 @@ drm_fb_get_from_dmabuf(struct linux_dmabuf_buffer *dmabuf,
 	if (!fb->bo)
 		goto err_free;
 
+<<<<<<< HEAD
 	fb->width = dmabuf->attributes.width;
 	fb->height = dmabuf->attributes.height;
 	fb->modifier = dmabuf->attributes.modifier[0];
@@ -1245,6 +1381,8 @@ drm_fb_get_from_dmabuf(struct linux_dmabuf_buffer *dmabuf,
 	}
 
 	fb->num_planes = dmabuf->attributes.n_planes;
+=======
+>>>>>>> origin/weston-imx-5.0
 	for (i = 0; i < dmabuf->attributes.n_planes; i++) {
 		union gbm_bo_handle handle;
 
@@ -1254,7 +1392,14 @@ drm_fb_get_from_dmabuf(struct linux_dmabuf_buffer *dmabuf,
 		fb->handles[i] = handle.u32;
 	}
 
+<<<<<<< HEAD
 	if (drm_fb_addfb(backend, fb) != 0)
+=======
+add_fb:
+	ret = drm_fb_addfb(fb);
+
+	if (ret != 0)
+>>>>>>> origin/weston-imx-5.0
 		goto err_free;
 
 	return fb;
@@ -1313,11 +1458,6 @@ drm_fb_get_from_bo(struct gbm_bo *bo, struct drm_backend *backend,
 			   (unsigned long) gbm_bo_get_format(bo));
 		goto err_free;
 	}
-
-	/* We can scanout an ARGB buffer if the surface's opaque region covers
-	 * the whole output, but we have to use XRGB as the KMS format code. */
-	if (is_opaque)
-		fb->format = pixel_format_get_opaque_substitute(fb->format);
 
 	if (backend->min_width > fb->width ||
 	    fb->width > backend->max_width ||
@@ -1521,6 +1661,30 @@ drm_view_transform_supported(struct weston_view *ev, struct weston_output *outpu
 	return true;
 }
 
+static void
+drm_clip_overlay_coordinate(struct drm_output * output,
+				struct drm_plane_state * state)
+{
+	uint32_t src_w = state->src_w >> 16;
+	uint32_t src_h = state->src_h >> 16;
+	/* handle out of screen case */
+	if (state->dest_x + state->dest_w > output->base.current_mode->width){
+		int32_t crop_width = output->base.current_mode->width - state->dest_x;
+		if(crop_width > 0) {
+			state->src_w = ALIGNTO((crop_width * src_w / state->dest_w), 2) << 16;
+			state->dest_w = crop_width;
+		}
+	}
+
+	if (state->dest_y + state->dest_h > output->base.current_mode->height){
+		int32_t crop_height = output->base.current_mode->height - state->dest_y;
+		if(crop_height > 0) {
+			state->src_h = ALIGNTO((crop_height * src_h / state->dest_h), 2) << 16;
+			state->dest_h = crop_height;
+		}
+	}
+}
+
 /**
  * Given a weston_view, fill the drm_plane_state's co-ordinates to display on
  * a given plane.
@@ -1530,13 +1694,20 @@ drm_plane_state_coords_for_view(struct drm_plane_state *state,
 				struct weston_view *ev)
 {
 	struct drm_output *output = state->output;
-	struct weston_buffer *buffer = ev->surface->buffer_ref.buffer;
-	pixman_region32_t dest_rect, src_rect;
+	struct weston_buffer_viewport *viewport = &ev->surface->buffer_viewport;
+	pixman_region32_t dest_rect;
 	pixman_box32_t *box, tbox;
-	float sxf1, syf1, sxf2, syf2;
+	int32_t scale;
+	int src_x, src_y, src_width, src_height;
 
 	if (!drm_view_transform_supported(ev, &output->base))
 		return false;
+
+	if (viewport->buffer.scale != output->base.current_scale){
+		scale = MAX(viewport->buffer.scale, output->base.current_scale);
+	} else {
+		scale = output->base.current_scale;
+	}
 
 	/* Update the base weston_plane co-ordinates. */
 	box = pixman_region32_extents(&ev->transform.boundingbox);
@@ -1554,7 +1725,7 @@ drm_plane_state_coords_for_view(struct drm_plane_state *state,
 	tbox = weston_transformed_rect(output->base.width,
 				       output->base.height,
 				       output->base.transform,
-				       output->base.current_scale,
+				       scale,
 				       *box);
 	state->dest_x = tbox.x1;
 	state->dest_y = tbox.y1;
@@ -1562,50 +1733,29 @@ drm_plane_state_coords_for_view(struct drm_plane_state *state,
 	state->dest_h = tbox.y2 - tbox.y1;
 	pixman_region32_fini(&dest_rect);
 
-	/* Now calculate the source rectangle, by finding the extents of the
-	 * view, and working backwards to source co-ordinates. */
-	pixman_region32_init(&src_rect);
-	pixman_region32_intersect(&src_rect, &ev->transform.boundingbox,
-				  &output->base.region);
-	box = pixman_region32_extents(&src_rect);
-	weston_view_from_global_float(ev, box->x1, box->y1, &sxf1, &syf1);
-	weston_surface_to_buffer_float(ev->surface, sxf1, syf1, &sxf1, &syf1);
-	weston_view_from_global_float(ev, box->x2, box->y2, &sxf2, &syf2);
-	weston_surface_to_buffer_float(ev->surface, sxf2, syf2, &sxf2, &syf2);
-	pixman_region32_fini(&src_rect);
+	src_x = wl_fixed_to_int (viewport->buffer.src_x);
+	src_y = wl_fixed_to_int (viewport->buffer.src_y);
+	src_width = wl_fixed_to_int (viewport->buffer.src_width);
+	src_height = wl_fixed_to_int (viewport->buffer.src_height);
 
-	/* Buffer transforms may mean that x2 is to the left of x1, and/or that
-	 * y2 is above y1. */
-	if (sxf2 < sxf1) {
-		double tmp = sxf1;
-		sxf1 = sxf2;
-		sxf2 = tmp;
+	if(src_width != -1 && src_width > 0 && src_x >=0 && src_y >= 0
+		&& src_x * scale < state->fb->width
+		&& src_y * scale < state->fb->height)
+	{
+		state->src_x = (src_x * scale) << 16;
+		state->src_y = (src_y * scale) << 16;
+		state->src_w = MIN(state->fb->width - src_x * scale, src_width * scale) << 16;
+		state->src_h = MIN(state->fb->height - src_y * scale, src_height * scale) << 16;
 	}
-	if (syf2 < syf1) {
-		double tmp = syf1;
-		syf1 = syf2;
-		syf2 = tmp;
-	}
-
-	/* Shift from S23.8 wl_fixed to U16.16 KMS fixed-point encoding. */
-	state->src_x = wl_fixed_from_double(sxf1) << 8;
-	state->src_y = wl_fixed_from_double(syf1) << 8;
-	state->src_w = wl_fixed_from_double(sxf2 - sxf1) << 8;
-	state->src_h = wl_fixed_from_double(syf2 - syf1) << 8;
-
-	/* Clamp our source co-ordinates to surface bounds; it's possible
-	 * for intermediate translations to give us slightly incorrect
-	 * co-ordinates if we have, for example, multiple zooming
-	 * transformations. View bounding boxes are also explicitly rounded
-	 * greedily. */
-	if (state->src_x < 0)
+	else
+	{
 		state->src_x = 0;
-	if (state->src_y < 0)
 		state->src_y = 0;
-	if (state->src_w > (uint32_t) ((buffer->width << 16) - state->src_x))
-		state->src_w = (buffer->width << 16) - state->src_x;
-	if (state->src_h > (uint32_t) ((buffer->height << 16) - state->src_y))
-		state->src_h = (buffer->height << 16) - state->src_y;
+		state->src_w = state->fb->width << 16;
+		state->src_h = state->fb->height << 16;
+	}
+
+	drm_clip_overlay_coordinate(output, state);
 
 	return true;
 }
@@ -2134,6 +2284,58 @@ drm_output_render_pixman(struct drm_output_state *state,
 	return drm_fb_ref(output->dumb[output->current_image]);
 }
 
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_IMXG2D)
+static struct drm_fb *
+drm_output_render_g2d(struct drm_output_state *state, pixman_region32_t *damage)
+{
+	struct drm_output *output = state->output;
+	struct weston_compositor *ec = output->base.compositor;
+	pixman_region32_t total_damage, previous_damage;
+
+	pixman_region32_init(&total_damage);
+	pixman_region32_init(&previous_damage);
+
+	pixman_region32_copy(&previous_damage, damage);
+
+	pixman_region32_union(&total_damage, damage, &output->previous_damage);
+	pixman_region32_copy(&output->previous_damage, &previous_damage);
+
+	output->current_image ^= 1;
+
+	g2d_renderer->output_set_buffer(&output->base,
+					  &output->g2d_image[output->current_image]);
+
+	ec->renderer->repaint_output(&output->base, &total_damage);
+
+	pixman_region32_fini(&total_damage);
+	pixman_region32_fini(&previous_damage);
+
+	return drm_fb_ref(output->dumb[output->current_image]);
+}
+#endif
+
+#ifdef HAVE_GBM_MODIFIERS
+static int
+drm_get_gbm_alignment(struct drm_fb *fb)
+{
+	int gbm_aligned = 1;
+
+	if (fb){
+		switch(fb->modifier) {
+#if defined(ENABLE_IMXGPU)
+			case DRM_FORMAT_MOD_VIVANTE_SUPER_TILED_FC:
+			case DRM_FORMAT_MOD_VIVANTE_SUPER_TILED:
+				gbm_aligned = 64;
+				break;
+#endif
+			default:
+				break;
+		}
+	}
+	return gbm_aligned;
+}
+#endif
+
 static void
 drm_output_render(struct drm_output_state *state, pixman_region32_t *damage)
 {
@@ -2143,6 +2345,7 @@ drm_output_render(struct drm_output_state *state, pixman_region32_t *damage)
 	struct drm_plane *scanout_plane = output->scanout_plane;
 	struct drm_backend *b = to_drm_backend(c);
 	struct drm_fb *fb;
+	struct weston_config_section *section;
 
 	/* If we already have a client buffer promoted to scanout, then we don't
 	 * want to render. */
@@ -2150,21 +2353,40 @@ drm_output_render(struct drm_output_state *state, pixman_region32_t *damage)
 						   output->scanout_plane);
 	if (scanout_state->fb)
 		return;
+	
+#ifdef HAVE_GBM_MODIFIERS
+	int gbm_aligned = drm_get_gbm_alignment (scanout_plane->state_cur->fb);
+#endif
 
 	if (!pixman_region32_not_empty(damage) &&
 	    scanout_plane->state_cur->fb &&
 	    (scanout_plane->state_cur->fb->type == BUFFER_GBM_SURFACE ||
 	     scanout_plane->state_cur->fb->type == BUFFER_PIXMAN_DUMB) &&
+#ifdef HAVE_GBM_MODIFIERS
+	    scanout_plane->state_cur->fb->width ==
+		ALIGNTO(output->base.current_mode->width, gbm_aligned) &&
+	    scanout_plane->state_cur->fb->height ==
+		ALIGNTO(output->base.current_mode->height, gbm_aligned)) {
+#else
 	    scanout_plane->state_cur->fb->width ==
 		output->base.current_mode->width &&
 	    scanout_plane->state_cur->fb->height ==
 		output->base.current_mode->height) {
+#endif
 		fb = drm_fb_ref(scanout_plane->state_cur->fb);
 	} else if (b->use_pixman) {
 		fb = drm_output_render_pixman(state, damage);
-	} else {
-		fb = drm_output_render_gl(state, damage);
 	}
+#if defined(ENABLE_IMXGPU)
+#if defined(ENABLE_IMXG2D)
+	else if (b->use_g2d)
+		fb = drm_output_render_g2d(state, damage);
+#endif
+#if defined(ENABLE_OPENGL)
+	else
+		fb = drm_output_render_gl(state, damage);
+#endif
+#endif
 
 	if (!fb) {
 		drm_plane_state_put_back(scanout_state);
@@ -2184,6 +2406,25 @@ drm_output_render(struct drm_output_state *state, pixman_region32_t *damage)
 	scanout_state->dest_w = scanout_state->src_w >> 16;
 	scanout_state->dest_h = scanout_state->src_h >> 16;
 
+	section = weston_config_get_section(wet_get_config(c),
+					    "shell", NULL, NULL);
+	if (section) {
+		char *size;
+		int n;
+		uint32_t width, height;
+
+		weston_config_section_get_string(section, "size", &size, NULL);
+
+		if(size){
+			n = sscanf(size, "%dx%d", &width, &height);
+			if (n == 2) {
+				if (scanout_state->src_w > (width << 16))
+					scanout_state->src_w = width << 16;
+				if (scanout_state->src_h > (height << 16))
+					scanout_state->src_h = height << 16;
+			}
+		}
+	}
 
 	pixman_region32_subtract(&c->primary_plane.damage,
 				 &c->primary_plane.damage, damage);
@@ -2311,16 +2552,15 @@ drm_output_apply_state_legacy(struct drm_output_state *state)
 	 * legacy PageFlip API doesn't allow us to do clipping either. */
 	assert(scanout_state->src_x == 0);
 	assert(scanout_state->src_y == 0);
-	assert(scanout_state->src_w ==
-		(unsigned) (output->base.current_mode->width << 16));
-	assert(scanout_state->src_h ==
-		(unsigned) (output->base.current_mode->height << 16));
 	assert(scanout_state->dest_x == 0);
 	assert(scanout_state->dest_y == 0);
+<<<<<<< HEAD
 	assert(scanout_state->dest_w == scanout_state->src_w >> 16);
 	assert(scanout_state->dest_h == scanout_state->src_h >> 16);
 	/* The legacy SetCrtc API doesn't support fences */
 	assert(scanout_state->in_fence_fd == -1);
+=======
+>>>>>>> origin/weston-imx-5.0
 
 	mode = to_drm_mode(output->base.current_mode);
 	if (backend->state_invalid ||
@@ -2526,13 +2766,26 @@ drm_output_apply_state_atomic(struct drm_output_state *state,
 	struct drm_mode *current_mode = to_drm_mode(output->base.current_mode);
 	struct drm_head *head;
 	int ret = 0;
+	int in_fence_fd = -1;
 
+<<<<<<< HEAD
 	drm_debug(b, "\t\t[atomic] %s output %lu (%s) state\n",
 		  (*flags & DRM_MODE_ATOMIC_TEST_ONLY) ? "testing" : "applying",
 		  (unsigned long) output->base.id, output->base.name);
 
 	if (state->dpms != output->state_cur->dpms) {
 		drm_debug(b, "\t\t\t[atomic] DPMS state differs, modeset OK\n");
+=======
+	if(output->gbm_surface){
+		if(gl_renderer->sync_post(output->base.compositor) == 0) {
+			gbm_surface_set_sync_post(output->gbm_surface, 0);
+			in_fence_fd = gbm_surface_get_in_fence_fd(output->gbm_surface);
+		} else {
+			gbm_surface_set_sync_post(output->gbm_surface, 1);
+		}
+	}
+	if (state->dpms != output->state_cur->dpms)
+>>>>>>> origin/weston-imx-5.0
 		*flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
 	}
 
@@ -2550,6 +2803,15 @@ drm_output_apply_state_atomic(struct drm_output_state *state,
 		wl_list_for_each(head, &output->base.head_list, base.output_link) {
 			ret |= connector_add_prop(req, head, WDRM_CONNECTOR_CRTC_ID,
 						  output->crtc_id);
+		}
+
+		if (backend->hdr_blob_id > 0) {
+			wl_list_for_each(head, &output->base.head_list, base.output_link) {
+				/* checking if the output driver this head */
+				if (head->base.output == &output->base)
+					connector_add_prop(req, head, WDRM_CONNECTOR_HDR10_METADATA,
+							backend->hdr_blob_id);
+			}
 		}
 	} else {
 		ret |= crtc_add_prop(req, output, WDRM_CRTC_MODE_ID, 0);
@@ -2590,6 +2852,16 @@ drm_output_apply_state_atomic(struct drm_output_state *state,
 				      plane_state->dest_w);
 		ret |= plane_add_prop(req, plane, WDRM_PLANE_CRTC_H,
 				      plane_state->dest_h);
+		if (in_fence_fd > 0 && plane->type == WDRM_PLANE_TYPE_PRIMARY)
+			ret |= plane_add_prop(req, plane, WDRM_PLANE_IN_FENCE_FD, in_fence_fd);
+
+		if (plane_state->fb && plane_state->fb->dtrc_meta != plane->dtrc_meta
+		    && plane->type == WDRM_PLANE_TYPE_OVERLAY
+			&& plane_state->fb->modifier != DRM_FORMAT_MOD_LINEAR)
+		{
+		        plane_add_prop(req, plane, WDRM_PLANE_DTRC_META, plane_state->fb->dtrc_meta);
+		        plane->dtrc_meta = plane_state->fb->dtrc_meta;
+		}
 
 		if (plane_state->fb && plane_state->fb->format)
 			pinfo = plane_state->fb->format;
@@ -2627,6 +2899,7 @@ drm_pending_state_apply_atomic(struct drm_pending_state *pending_state,
 	drmModeAtomicReq *req = drmModeAtomicAlloc();
 	uint32_t flags;
 	int ret = 0;
+	drm_magic_t magic;
 
 	if (!req)
 		return -1;
@@ -2758,6 +3031,25 @@ drm_pending_state_apply_atomic(struct drm_pending_state *pending_state,
 		goto out;
 	}
 
+<<<<<<< HEAD
+=======
+	switch (mode) {
+	case DRM_STATE_APPLY_SYNC:
+		break;
+	case DRM_STATE_APPLY_ASYNC:
+		flags |= DRM_MODE_PAGE_FLIP_EVENT | DRM_MODE_ATOMIC_NONBLOCK;
+		break;
+	case DRM_STATE_TEST_ONLY:
+		flags |= DRM_MODE_ATOMIC_TEST_ONLY;
+		break;
+	}
+
+	/*drm master was set by systemd in PM test, try to set the master back.*/
+	if (!(drmGetMagic(b->drm.fd, &magic) == 0 &&
+			drmAuthMagic(b->drm.fd, magic) == 0)) {
+		drmSetMaster(b->drm.fd);
+	}
+>>>>>>> origin/weston-imx-5.0
 	ret = drmModeAtomicCommit(b->drm.fd, req, flags, b);
 	drm_debug(b, "[atomic] drmModeAtomicCommit\n");
 
@@ -2782,6 +3074,10 @@ drm_pending_state_apply_atomic(struct drm_pending_state *pending_state,
 	assert(wl_list_empty(&pending_state->output_list));
 
 out:
+	if (b->hdr_blob_id > 0) {
+		drmModeDestroyPropertyBlob (b->drm.fd, b->hdr_blob_id);
+		b->hdr_blob_id = 0;
+	}
 	drmModeAtomicFree(req);
 	drm_pending_state_free(pending_state);
 	return ret;
@@ -3179,6 +3475,132 @@ drm_repaint_cancel(struct weston_compositor *compositor, void *repaint_data)
 	b->repaint_data = NULL;
 }
 
+static void
+drm_query_dmabuf_formats(struct weston_compositor *compositor, int **formats, int *num_formats)
+{
+	struct drm_backend *b = to_drm_backend(compositor);
+	struct drm_plane *p;
+	uint64_t has_prime;
+	uint32_t i, j;
+	int ret;
+
+	assert(formats);
+	assert(num_formats);
+
+	*num_formats = 0;
+
+	ret = drmGetCap (b->drm.fd, DRM_CAP_PRIME, &has_prime);
+	if (ret || !(bool) (has_prime & DRM_PRIME_CAP_IMPORT)) {
+	        weston_log("drm backend not support import DMABUF\n");
+	        return;
+	}
+
+	wl_list_for_each(p, &b->plane_list, link) {
+		if (p->type != WDRM_PLANE_TYPE_OVERLAY)
+			continue;
+
+		*formats = calloc(p->count_formats, sizeof(int));
+		if (*formats == NULL) {
+			*num_formats = 0;
+			continue;
+		}
+
+		j = 0;
+		for (i = 0; i < p->count_formats; i++)
+			(*formats)[j++] = p->formats[i].format;
+
+		*num_formats = j;
+		if (*num_formats > 0)
+			break;
+	}
+}
+
+static void
+drm_query_dmabuf_modifiers (struct weston_compositor *compositor, int format,
+                               uint64_t **modifiers, int *num_modifiers)
+{
+       struct drm_backend *b = to_drm_backend(compositor);
+       struct drm_plane *p;
+       uint64_t has_prime;
+       uint32_t i, j;
+       int ret;
+
+       assert(modifiers);
+       assert(num_modifiers);
+
+       *num_modifiers = 0;
+
+       ret = drmGetCap (b->drm.fd, DRM_CAP_PRIME, &has_prime);
+       if (ret || !(bool) (has_prime & DRM_PRIME_CAP_IMPORT)) {
+               weston_log("drm backend not support import DMABUF\n");
+               return;
+       }
+
+       wl_list_for_each(p, &b->plane_list, link) {
+               if (p->type != WDRM_PLANE_TYPE_OVERLAY)
+                       continue;
+
+               for (i = 0; i < p->count_formats; i++) {
+
+                       if (p->formats[i].format != format)
+                               continue;
+
+                       if (p->formats[i].count_modifiers <= 0)
+                               continue;
+
+                       *modifiers = calloc(p->formats[i].count_modifiers, sizeof(uint64_t));
+                       if (*modifiers == NULL) {
+                               *num_modifiers = 0;
+                               return;
+                       }
+
+                       for (j = 0; j < p->formats[i].count_modifiers; j++) {
+                               (*modifiers)[j] = p->formats[i].modifiers[j];
+                       }
+                       *num_modifiers = p->formats[i].count_modifiers;
+               }
+
+               if (*num_modifiers > 0)
+                       break;
+       }
+}
+
+/**
+ * Test if drm driver can import dmabuf
+ *
+ * called by compositor when a dmabuf comes to test if this buffer
+ * can used by drm driver directly
+ */
+static bool
+drm_import_dmabuf(struct weston_compositor *compositor,
+	struct linux_dmabuf_buffer *dmabuf)
+{
+	struct drm_backend *b = to_drm_backend(compositor);
+	struct drm_plane *p;
+	uint64_t has_prime;
+	uint32_t i;
+	int ret;
+
+	ret = drmGetCap (b->drm.fd, DRM_CAP_PRIME, &has_prime);
+	if (ret || !(bool) (has_prime & DRM_PRIME_CAP_IMPORT)) {
+	        weston_log("drm backend not support import DMABUF\n");
+	        return false;
+	}
+
+	wl_list_for_each(p, &b->plane_list, link) {
+		if (p->type != WDRM_PLANE_TYPE_OVERLAY)
+			continue;
+
+		for (i = 0; i < p->count_formats; i++) {
+			if (p->formats[i].format == dmabuf->attributes.format
+				&& dmabuf->attributes.format == DRM_FORMAT_P010)
+				return true;
+		}
+	}
+
+	return false;
+}
+
 #ifdef HAVE_DRM_ATOMIC
 static void
 atomic_flip_handler(int fd, unsigned int frame, unsigned int sec,
@@ -3281,9 +3703,20 @@ drm_output_prepare_overlay_view(struct drm_output_state *output_state,
 
 		state->ev = ev;
 		state->output = output;
+
+		/* We hold one reference for the lifetime of this function;
+		 * from calling drm_fb_get_from_view, to the out label where
+		 * we unconditionally drop the reference. So, we take another
+		 * reference here to live within the state. */
+		state->fb = drm_fb_ref(fb);
+
 		if (!drm_plane_state_coords_for_view(state, ev)) {
+<<<<<<< HEAD
 			drm_debug(b, "\t\t\t\t[overlay] not placing view %p on overlay: "
 				     "unsuitable transform\n", ev);
+=======
+			drm_fb_unref(fb);
+>>>>>>> origin/weston-imx-5.0
 			drm_plane_state_put_back(state);
 			state = NULL;
 			continue;
@@ -3291,6 +3724,7 @@ drm_output_prepare_overlay_view(struct drm_output_state *output_state,
 		if (!b->atomic_modeset &&
 		    (state->src_w != state->dest_w << 16 ||
 		     state->src_h != state->dest_h << 16)) {
+<<<<<<< HEAD
 			drm_debug(b, "\t\t\t\t[overlay] not placing view %p on overlay: "
 				     "no scaling without atomic\n", ev);
 			drm_plane_state_put_back(state);
@@ -3306,11 +3740,15 @@ drm_output_prepare_overlay_view(struct drm_output_state *output_state,
 		     p->props[WDRM_PLANE_IN_FENCE_FD].prop_id == 0)) {
 			drm_debug(b, "\t\t\t\t[overlay] not placing view %p on overlay: "
 				     "no in-fence support\n", ev);
+=======
+			drm_fb_unref(fb);
+>>>>>>> origin/weston-imx-5.0
 			drm_plane_state_put_back(state);
 			state = NULL;
 			continue;
 		}
 
+<<<<<<< HEAD
 		/* We hold one reference for the lifetime of this function;
 		 * from calling drm_fb_get_from_view, to the out label where
 		 * we unconditionally drop the reference. So, we take another
@@ -3319,6 +3757,8 @@ drm_output_prepare_overlay_view(struct drm_output_state *output_state,
 
 		state->in_fence_fd = ev->surface->acquire_fence_fd;
 
+=======
+>>>>>>> origin/weston-imx-5.0
 		/* In planes-only mode, we don't have an incremental state to
 		 * test against, so we just hope it'll work. */
 		if (mode == DRM_OUTPUT_PROPOSE_STATE_PLANES_ONLY) {
@@ -3614,13 +4054,22 @@ drm_output_propose_state(struct weston_output *output_base,
 			return NULL;
 		}
 
+#ifdef HAVE_GBM_MODIFIERS
+		int gbm_aligned = drm_get_gbm_alignment (scanout_fb);
+		if (scanout_fb->width != ALIGNTO(output_base->current_mode->width, gbm_aligned) ||
+		    scanout_fb->height != ALIGNTO(output_base->current_mode->height, gbm_aligned)) {
+#else
 		if (scanout_fb->width != output_base->current_mode->width ||
 		    scanout_fb->height != output_base->current_mode->height) {
+<<<<<<< HEAD
 			drm_debug(b, "\t\t[state] cannot propose mixed mode "
 			             "for output %s (%lu): previous fb has "
 				     "different size\n",
 				  output->base.name,
 				  (unsigned long) output->base.id);
+=======
+#endif
+>>>>>>> origin/weston-imx-5.0
 			drm_output_state_free(state);
 			return NULL;
 		}
@@ -3655,6 +4104,8 @@ drm_output_propose_state(struct weston_output *output_base,
 		pixman_region32_t clipped_view;
 		bool totally_occluded = false;
 		bool overlay_occluded = false;
+		struct linux_dmabuf_buffer *dmabuf = NULL;
+		pixman_region32_init(&clipped_view);
 
 		drm_debug(b, "\t\t\t[view] evaluating view %p for "
 		             "output %s (%lu)\n",
@@ -3681,10 +4132,27 @@ drm_output_propose_state(struct weston_output *output_base,
 			drm_debug(b, "\t\t\t\t[view] not assigning view %p to plane "
 			             "(no buffer available)\n", ev);
 			force_renderer = true;
+<<<<<<< HEAD
+=======
+		else {
+			struct weston_buffer *buffer = ev->surface->buffer_ref.buffer;
+			dmabuf = linux_dmabuf_buffer_get(buffer->resource);
+			if (dmabuf) {
+				if (dmabuf->attributes.format == DRM_FORMAT_NV12
+					|| dmabuf->attributes.format == DRM_FORMAT_P010
+					|| dmabuf->attributes.format == DRM_FORMAT_YUYV) {
+					ps = drm_output_prepare_overlay_view(state, ev, mode);
+					if (ps)
+						goto next_view;
+					else
+						force_renderer = true;
+				} else
+					force_renderer = true;
+			}
+>>>>>>> origin/weston-imx-5.0
 		}
 
 		/* Ignore views we know to be totally occluded. */
-		pixman_region32_init(&clipped_view);
 		pixman_region32_intersect(&clipped_view,
 					  &ev->transform.boundingbox,
 					  &output->base.region);
@@ -3756,6 +4224,7 @@ drm_output_propose_state(struct weston_output *output_base,
 		if (!ps && !overlay_occluded && !force_renderer)
 			ps = drm_output_prepare_overlay_view(state, ev, mode);
 
+next_view:
 		if (ps) {
 			/* If we have been assigned to an overlay or scanout
 			 * plane, add this area to the occluded region, so
@@ -4030,13 +4499,23 @@ choose_mode (struct drm_output *output, struct weston_mode *target_mode)
 }
 
 static int
-drm_output_init_egl(struct drm_output *output, struct drm_backend *b);
-static void
-drm_output_fini_egl(struct drm_output *output);
-static int
 drm_output_init_pixman(struct drm_output *output, struct drm_backend *b);
 static void
 drm_output_fini_pixman(struct drm_output *output);
+#if defined(ENABLE_IMXGPU)
+#if defined(ENABLE_OPENGL)
+static int
+drm_output_init_egl(struct drm_output *output, struct drm_backend *b);
+static void
+drm_output_fini_egl(struct drm_output *output);
+#endif
+#if defined(ENABLE_IMXG2D)
+static int
+drm_output_init_g2d(struct drm_output *output, struct drm_backend *b);
+static void
+drm_output_fini_g2d(struct drm_output *output);
+#endif
+#endif
 
 static int
 drm_output_switch_mode(struct weston_output *output_base, struct weston_mode *mode)
@@ -4075,6 +4554,17 @@ drm_output_switch_mode(struct weston_output *output_base, struct weston_mode *mo
 				   "new mode\n");
 			return -1;
 		}
+#if defined(ENABLE_IMXGPU)
+#if defined(ENABLE_IMXG2D)
+	} else if (b->use_g2d) {
+		drm_output_fini_g2d(output);
+		if (drm_output_init_g2d(output, b) < 0) {
+			weston_log("failed to init output g2d state with "
+				   "new mode\n");
+			return -1;
+		}
+#endif
+#if defined(ENABLE_OPENGL)
 	} else {
 		drm_output_fini_egl(output);
 		if (drm_output_init_egl(output, b) < 0) {
@@ -4082,6 +4572,8 @@ drm_output_switch_mode(struct weston_output *output_base, struct weston_mode *mo
 				   "new mode");
 			return -1;
 		}
+#endif
+#endif
 	}
 
 	return 0;
@@ -4190,6 +4682,7 @@ init_kms_caps(struct drm_backend *b)
 	return 0;
 }
 
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_OPENGL)
 static struct gbm_device *
 create_gbm_device(int fd)
 {
@@ -4275,12 +4768,50 @@ init_egl(struct drm_backend *b)
 
 	return 0;
 }
+#endif
 
 static int
 init_pixman(struct drm_backend *b)
 {
 	return pixman_renderer_init(b->compositor);
 }
+
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_IMXG2D)
+static int
+drm_backend_create_g2d_renderer(struct drm_backend *b)
+{
+	if (g2d_renderer->drm_display_create(b->compositor,
+					(void *)b->gbm) < 0) {
+		return -1;
+	}
+
+	return 0;
+}
+#endif
+
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_IMXG2D)
+static int
+init_g2d(struct drm_backend *b)
+{
+	g2d_renderer = weston_load_module("g2d-renderer.so",
+						 "g2d_renderer_interface");
+	if (!g2d_renderer) {
+		weston_log("Could not load g2d renderer\n");
+		return -1;
+	}
+
+	b->gbm = gbm_create_device(b->drm.fd);
+	if (!b->gbm)
+		return -1;
+
+	if (drm_backend_create_g2d_renderer(b) < 0) {
+		gbm_device_destroy(b->gbm);
+		return -1;
+	}
+
+	return 0;
+}
+#endif
 
 #ifdef HAVE_DRM_FORMATS_BLOB
 static inline uint32_t *
@@ -5032,6 +5563,7 @@ err:
 	return -1;
 }
 
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_OPENGL)
 /* Init output state that depends on gl or gbm */
 static int
 drm_output_init_egl(struct drm_output *output, struct drm_backend *b)
@@ -5104,7 +5636,9 @@ drm_output_init_egl(struct drm_output *output, struct drm_backend *b)
 
 	return 0;
 }
+#endif
 
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_OPENGL)
 static void
 drm_output_fini_egl(struct drm_output *output)
 {
@@ -5126,6 +5660,7 @@ drm_output_fini_egl(struct drm_output *output)
 	output->gbm_surface = NULL;
 	drm_output_fini_cursor_egl(output);
 }
+#endif
 
 static int
 drm_output_init_pixman(struct drm_output *output, struct drm_backend *b)
@@ -5218,6 +5753,86 @@ drm_output_fini_pixman(struct drm_output *output)
 		output->image[i] = NULL;
 	}
 }
+
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_IMXG2D)
+static int
+drm_output_init_g2d(struct drm_output *output, struct drm_backend *b)
+{
+	int w = output->base.current_mode->width;
+	int h = output->base.current_mode->height;
+	uint32_t format = output->gbm_format;
+	enum g2d_format g2dFormat;
+	uint32_t i = 0;
+
+	switch (format) {
+		case GBM_FORMAT_XRGB8888:
+			g2dFormat = G2D_BGRX8888;
+			break;
+		case GBM_FORMAT_RGB565:
+			g2dFormat = G2D_RGB565;
+			break;
+		default:
+			weston_log("Unsupported pixman format 0x%x\n", format);
+			return -1;
+	}
+
+	for (i = 0; i < ARRAY_LENGTH(output->dumb); i++) {
+		struct g2d_surfaceEx* g2dSurface = &(output->g2d_image[i]);
+		int ret, dmafd = 0;
+		output->dumb[i] = drm_fb_create_dumb(b, w, h, format);
+		if (!output->dumb[i])
+			goto err;
+
+		ret = drmPrimeHandleToFD(b->drm.fd, output->dumb[i]->handles[0], DRM_CLOEXEC,
+				       &dmafd);
+		if(ret < 0)
+			goto err;
+
+		ret = g2d_renderer->create_g2d_image(g2dSurface, g2dFormat,
+						output->dumb[i]->map,
+						w, h,
+						output->dumb[i]->strides[0],
+						output->dumb[i]->size,
+						dmafd);
+		if (ret < 0)
+			goto err;
+	}
+
+	if (g2d_renderer->drm_output_create(&output->base) < 0)
+		goto err;
+
+	drm_output_init_cursor_egl(output, b);
+
+	return 0;
+
+err:
+	weston_log("drm_output_init_g2d failed.\n");
+	for (i = 0; i < ARRAY_LENGTH(output->dumb); i++) {
+		if (output->dumb[i])
+			drm_fb_unref(output->dumb[i]);
+
+		output->dumb[i] = NULL;
+	}
+
+	return -1;
+}
+#endif
+
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_IMXG2D)
+static void
+drm_output_fini_g2d(struct drm_output *output)
+{
+	unsigned int i;
+
+	pixman_region32_fini(&output->previous_damage);
+
+	for (i = 0; i < ARRAY_LENGTH(output->dumb); i++) {
+		drm_fb_unref(output->dumb[i]);
+		output->dumb[i] = NULL;
+	}
+	g2d_renderer->output_destroy(&output->base);
+}
+#endif
 
 static void
 edid_parse_string(const uint8_t *data, char text[])
@@ -5497,12 +6112,24 @@ parse_gbm_format(const char *s, uint32_t default_value, uint32_t *gbm_format)
 
 	if (s == NULL) {
 		*gbm_format = default_value;
+<<<<<<< HEAD
 
 		return 0;
 	}
 
 	pinfo = pixel_format_get_info_by_drm_name(s);
 	if (!pinfo) {
+=======
+	else if (strcmp(s, "xrgb8888") == 0)
+		*gbm_format = GBM_FORMAT_XRGB8888;
+	else if (strcmp(s, "argb8888") == 0)
+		*gbm_format = GBM_FORMAT_ARGB8888;
+	else if (strcmp(s, "rgb565") == 0)
+		*gbm_format = GBM_FORMAT_RGB565;
+	else if (strcmp(s, "xrgb2101010") == 0)
+		*gbm_format = GBM_FORMAT_XRGB2101010;
+	else {
+>>>>>>> origin/weston-imx-5.0
 		weston_log("fatal: unrecognized pixel format: %s\n", s);
 
 		return -1;
@@ -6180,9 +6807,20 @@ drm_output_enable(struct weston_output *base)
 			weston_log("Failed to init output pixman state\n");
 			goto err;
 		}
+#if defined(ENABLE_IMXGPU)
+#if defined(ENABLE_IMXG2D)
+	} else if (b->use_g2d) {
+		if (drm_output_init_g2d(output, b) < 0) {
+			weston_log("Failed to init output g2d state\n");
+			goto err;
+		}
+#endif
+#if defined(ENABLE_OPENGL)
 	} else if (drm_output_init_egl(output, b) < 0) {
 		weston_log("Failed to init output gl state\n");
 		goto err;
+#endif
+#endif
 	}
 
 	drm_output_init_backlight(output);
@@ -6225,8 +6863,16 @@ drm_output_deinit(struct weston_output *base)
 
 	if (b->use_pixman)
 		drm_output_fini_pixman(output);
+#if defined(ENABLE_IMXGPU)
+#if defined(ENABLE_IMXG2D)
+	else if (b->use_g2d)
+		drm_output_fini_g2d(output);
+#endif
+#if defined(ENABLE_OPENGL)
 	else
 		drm_output_fini_egl(output);
+#endif
+#endif
 
 	/* Since our planes are no longer in use anywhere, remove their base
 	 * weston_plane's link from the plane stacking list, unless we're
@@ -7070,6 +7716,7 @@ recorder_binding(struct weston_keyboard *keyboard, const struct timespec *time,
 }
 #endif
 
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_OPENGL)
 static void
 switch_to_gl_renderer(struct drm_backend *b)
 {
@@ -7123,7 +7770,9 @@ switch_to_gl_renderer(struct drm_backend *b)
 				   " synchronization support failed.\n");
 	}
 }
+#endif
 
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_OPENGL)
 static void
 renderer_switch_binding(struct weston_keyboard *keyboard,
 			const struct timespec *time, uint32_t key, void *data)
@@ -7133,6 +7782,7 @@ renderer_switch_binding(struct weston_keyboard *keyboard,
 
 	switch_to_gl_renderer(b);
 }
+#endif
 
 static void
 drm_virtual_output_start_repaint_loop(struct weston_output *output_base)
@@ -7388,6 +8038,7 @@ static const struct weston_drm_output_api api = {
 	drm_output_set_seat,
 };
 
+<<<<<<< HEAD
 static const struct weston_drm_virtual_output_api virt_api = {
 	drm_virtual_output_create,
 	drm_virtual_output_set_gbm_format,
@@ -7397,6 +8048,98 @@ static const struct weston_drm_virtual_output_api virt_api = {
 	drm_virtual_output_finish_frame
 };
 
+=======
+static void
+hdr10_metadata_destroy(struct wl_client *client,
+			  struct wl_resource *resource)
+{
+	wl_resource_destroy(resource);
+}
+
+static void
+hdr10_metadata_set_metadata(struct wl_client *client,
+			     struct wl_resource *resource,
+			     uint32_t eotf,
+				 uint32_t type,
+			     uint32_t display_primaries_red,
+			     uint32_t display_primaries_green,
+			     uint32_t display_primaries_blue,
+			     uint32_t white_point,
+			     uint32_t mastering_display_luminance,
+			     uint32_t max_cll,
+				 uint32_t max_fall)
+{
+	struct weston_compositor *compositor = wl_resource_get_user_data(resource);
+	struct drm_backend *b = to_drm_backend(compositor);
+	struct hdr_static_metadata hdr_metadata;
+
+	hdr_metadata.eotf = eotf & 0xffff;
+	hdr_metadata.type = type & 0xffff;
+	hdr_metadata.display_primaries_x[0] = (display_primaries_red >> 16) & 0xffff;
+	hdr_metadata.display_primaries_y[0] = display_primaries_red & 0xffff;
+	hdr_metadata.display_primaries_x[1] = (display_primaries_green >> 16) & 0xffff;
+	hdr_metadata.display_primaries_y[1] = display_primaries_green & 0xffff;
+	hdr_metadata.display_primaries_x[2] = (display_primaries_blue >> 16) & 0xffff;
+	hdr_metadata.display_primaries_y[2] = display_primaries_blue & 0xffff;
+	hdr_metadata.white_point_x = (white_point >> 16) & 0xffff;
+	hdr_metadata.white_point_y = white_point & 0xffff;
+	hdr_metadata.max_mastering_display_luminance =
+				(mastering_display_luminance >> 16) & 0xffff;
+	hdr_metadata.min_mastering_display_luminance =
+				mastering_display_luminance & 0xffff;
+	hdr_metadata.max_cll = max_cll & 0xffff;
+	hdr_metadata.max_fall = max_fall & 0xffff;
+
+	drmModeCreatePropertyBlob(b->drm.fd, &hdr_metadata, sizeof(hdr_metadata), &b->hdr_blob_id);
+}
+
+static const struct zwp_hdr10_metadata_v1_interface hdr10_metadata_interface = {
+	hdr10_metadata_destroy,
+	hdr10_metadata_set_metadata,
+};
+
+static void
+bind_hdr10_metadata(struct wl_client *client,
+		       void *data, uint32_t version, uint32_t id)
+{
+	struct wl_resource *resource;
+	struct weston_compositor *compositor = data;
+
+	resource = wl_resource_create(client, &zwp_hdr10_metadata_v1_interface,
+				      version, id);
+	if (resource == NULL) {
+		wl_client_post_no_memory(client);
+		return;
+	}
+
+	wl_resource_set_implementation(resource, &hdr10_metadata_interface,
+				       compositor, NULL);
+}
+
+static bool
+drm_backend_is_hdr_supported(struct weston_compositor *compositor)
+{
+	struct drm_output *output;
+	struct drm_head *head;
+
+	wl_list_for_each(output, &compositor->output_list, base.link) {
+		wl_list_for_each(head, &output->base.head_list, base.output_link) {
+			if (head->props_conn[WDRM_CONNECTOR_HDR10_METADATA].prop_id > 0)
+				return true;
+		}
+	}
+
+	wl_list_for_each(output, &compositor->pending_output_list, base.link) {
+		wl_list_for_each(head, &output->base.head_list, base.output_link) {
+			if (head->props_conn[WDRM_CONNECTOR_HDR10_METADATA].prop_id > 0)
+				return true;
+		}
+	}
+
+	return true;
+}
+
+>>>>>>> origin/weston-imx-5.0
 static struct drm_backend *
 drm_backend_create(struct weston_compositor *compositor,
 		   struct weston_drm_backend_config *config)
@@ -7427,6 +8170,9 @@ drm_backend_create(struct weston_compositor *compositor,
 
 	b->compositor = compositor;
 	b->use_pixman = config->use_pixman;
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_IMXG2D)
+	b->use_g2d = config->use_g2d;
+#endif
 	b->pageflip_timeout = config->pageflip_timeout;
 	b->use_pixman_shadow = config->use_pixman_shadow;
 
@@ -7477,11 +8223,22 @@ drm_backend_create(struct weston_compositor *compositor,
 			weston_log("failed to initialize pixman renderer\n");
 			goto err_udev_dev;
 		}
+#if defined(ENABLE_IMXGPU)
+#if defined(ENABLE_IMXG2D)
+	} else if(b->use_g2d){
+		if (init_g2d(b) < 0) {
+			weston_log("failed to initialize g2d render\n");
+			goto err_udev_dev;
+		}
+#endif
+#if defined(ENABLE_OPENGL)
 	} else {
 		if (init_egl(b) < 0) {
 			weston_log("failed to initialize egl\n");
 			goto err_udev_dev;
 		}
+#endif
+#endif
 	}
 
 	b->base.destroy = drm_destroy;
@@ -7489,6 +8246,9 @@ drm_backend_create(struct weston_compositor *compositor,
 	b->base.repaint_flush = drm_repaint_flush;
 	b->base.repaint_cancel = drm_repaint_cancel;
 	b->base.create_output = drm_output_create;
+	b->base.query_dmabuf_formats = drm_query_dmabuf_formats;
+	b->base.query_dmabuf_modifiers = drm_query_dmabuf_modifiers;
+	b->base.import_dmabuf = drm_import_dmabuf;
 
 	weston_setup_vt_switch_bindings(compositor);
 
@@ -7499,7 +8259,6 @@ drm_backend_create(struct weston_compositor *compositor,
 			    compositor, b->udev, seat_id,
 			    config->configure_device) < 0) {
 		weston_log("failed to create input devices\n");
-		goto err_sprite;
 	}
 
 	if (drm_backend_create_heads(b, drm_device) < 0) {
@@ -7544,8 +8303,10 @@ drm_backend_create(struct weston_compositor *compositor,
 					    planes_binding, b);
 	weston_compositor_add_debug_binding(compositor, KEY_Q,
 					    recorder_binding, b);
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_OPENGL)
 	weston_compositor_add_debug_binding(compositor, KEY_W,
 					    renderer_switch_binding, b);
+#endif
 
 	if (compositor->renderer->import_dmabuf) {
 		if (linux_dmabuf_setup(compositor) < 0)
@@ -7553,10 +8314,20 @@ drm_backend_create(struct weston_compositor *compositor,
 				   "support failed.\n");
 	}
 
+<<<<<<< HEAD
 	if (compositor->capabilities & WESTON_CAP_EXPLICIT_SYNC) {
 		if (linux_explicit_synchronization_setup(compositor) < 0)
 			weston_log("Error: initializing explicit "
 				   " synchronization support failed.\n");
+=======
+	if (drm_backend_is_hdr_supported(compositor)) {
+		if (!wl_global_create(compositor->wl_display, &zwp_hdr10_metadata_v1_interface, 1,
+				      compositor, bind_hdr10_metadata)) {
+			weston_log("Error: initializing hdr10 support failed\n");
+		}
+	} else {
+		weston_log("info: HDR is not support\n");
+>>>>>>> origin/weston-imx-5.0
 	}
 
 	ret = weston_plugin_api_register(compositor, WESTON_DRM_OUTPUT_API_NAME,
@@ -7584,7 +8355,6 @@ err_drm_source:
 	wl_event_source_remove(b->drm_source);
 err_udev_input:
 	udev_input_destroy(&b->input);
-err_sprite:
 	if (b->gbm)
 		gbm_device_destroy(b->gbm);
 	destroy_sprites(b);
@@ -7603,7 +8373,20 @@ err_compositor:
 static void
 config_init_to_defaults(struct weston_drm_backend_config *config)
 {
+#if !defined(ENABLE_IMXGPU) || !defined(ENABLE_OPENGL) && !defined(ENABLE_IMXG2D)
+	config->use_pixman = 1;
 	config->use_pixman_shadow = true;
+#else
+	config->use_pixman = 0;
+	config->use_pixman_shadow = false;
+#endif
+#if defined(ENABLE_IMXGPU) && defined(ENABLE_IMXG2D)
+#if !defined(ENABLE_OPENGL)
+	config->use_g2d = 1;
+#else
+	config->use_g2d = 0;
+#endif
+#endif
 }
 
 WL_EXPORT int

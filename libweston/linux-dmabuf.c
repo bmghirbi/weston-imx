@@ -141,6 +141,9 @@ destroy_linux_dmabuf_wl_buffer(struct wl_resource *resource)
 	assert(buffer->buffer_resource == resource);
 	assert(!buffer->params_resource);
 
+	if (buffer->gem_handle_close_func)
+		buffer->gem_handle_close_func(buffer);
+
 	if (buffer->user_data_destroy_func)
 		buffer->user_data_destroy_func(buffer);
 
@@ -334,12 +337,35 @@ params_create_immed(struct wl_client *client,
 			     format, flags);
 }
 
+static void
+params_add_dtrc_meta(struct wl_client *client,
+		    struct wl_resource *params_resource,
+		    uint32_t rfc_chroma_offset,
+		    uint32_t rfc_luma_offset)
+{
+	struct linux_dmabuf_buffer *buffer;
+
+	buffer = wl_resource_get_user_data(params_resource);
+	if (!buffer) {
+		wl_resource_post_error(params_resource,
+			ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_ALREADY_USED,
+			"params was already used to create a wl_buffer");
+		return;
+	}
+
+	assert(buffer->params_resource == params_resource);
+	assert(!buffer->buffer_resource);
+
+	buffer->attributes.dtrc_meta =  rfc_luma_offset | ((uint64_t)rfc_chroma_offset << 32);
+}
+
 static const struct zwp_linux_buffer_params_v1_interface
 zwp_linux_buffer_params_implementation = {
 	params_destroy,
 	params_add,
 	params_create,
-	params_create_immed
+	params_create_immed,
+	params_add_dtrc_meta
 };
 
 static void
@@ -416,6 +442,21 @@ linux_dmabuf_buffer_get(struct wl_resource *resource)
 	assert(buffer->buffer_resource == resource);
 
 	return buffer;
+}
+
+/** Set drmbackend-private data
+ *
+ * set the drm gem handle close callback in the linux_dmabuf_buffer
+ *
+ * \param buffer The linux_dmabuf_buffer object to set for.
+ * \param func Destructor function to be called to close gem handle
+ *             when the linux_dmabuf_buffer gets destroyed.
+ */
+WL_EXPORT void
+linux_dmabuf_buffer_gem_handle_close_cb(struct linux_dmabuf_buffer *buffer,
+				  dmabuf_gem_handle_close_func func)
+{
+	buffer->gem_handle_close_func = func;
 }
 
 /** Set renderer-private data
@@ -525,6 +566,45 @@ bind_linux_dmabuf(struct wl_client *client,
 			free(modifiers);
 	}
 	free(formats);
+	formats = NULL;
+
+	if (compositor->backend->query_dmabuf_formats && compositor->backend->query_dmabuf_modifiers) {
+		compositor->backend->query_dmabuf_formats(compositor, &formats, &num_formats);
+
+		if (!formats)
+			return;
+
+		for (i = 0; i < num_formats; i++) {
+			compositor->backend->query_dmabuf_modifiers(compositor,
+							     formats[i],
+							     &modifiers,
+							     &num_modifiers);
+
+			/* send DRM_FORMAT_MOD_INVALID token when no modifiers are supported
+			 * for this format */
+			if (num_modifiers == 0) {
+				num_modifiers = 1;
+				modifiers = &modifier_invalid;
+			}
+			for (j = 0; j < num_modifiers; j++) {
+				if (version >= ZWP_LINUX_DMABUF_V1_MODIFIER_SINCE_VERSION) {
+					uint32_t modifier_lo = modifiers[j] & 0xFFFFFFFF;
+					uint32_t modifier_hi = modifiers[j] >> 32;
+					zwp_linux_dmabuf_v1_send_modifier(resource,
+									  formats[i],
+									  modifier_hi,
+									  modifier_lo);
+				} else if (modifiers[j] == DRM_FORMAT_MOD_LINEAR ||
+					   modifiers == &modifier_invalid) {
+					zwp_linux_dmabuf_v1_send_format(resource,
+									formats[i]);
+				}
+			}
+			if (modifiers != &modifier_invalid)
+				free(modifiers);
+		}
+		free(formats);
+	}
 }
 
 /** Advertise linux_dmabuf support
