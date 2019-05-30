@@ -2391,7 +2391,7 @@ load_drm_backend(struct weston_compositor *c,
 	                               &config.pageflip_timeout, 0);
 	weston_config_section_get_bool(section, "pixman-shadow", &use_shadow, 1);
 #if defined(ENABLE_IMXG2D)
-	weston_config_section_get_uint(section, "use-g2d", &use_g2d, 0);
+	weston_config_section_get_uint(section, "use-g2d", &use_g2d_, 0);
 	config.use_g2d = config.use_g2d || use_g2d_;
 #endif
 	config.use_pixman_shadow = use_shadow;

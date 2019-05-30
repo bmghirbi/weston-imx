@@ -4041,11 +4041,6 @@ WL_EXPORT struct gl_renderer_interface gl_renderer_interface = {
 	.output_destroy = gl_renderer_output_destroy,
 	.output_surface = gl_renderer_output_surface,
 	.output_set_border = gl_renderer_output_set_border,
-<<<<<<< HEAD
 	.create_fence_fd = gl_renderer_create_fence_fd,
 	.print_egl_error_state = gl_renderer_print_egl_error_state
-=======
-	.print_egl_error_state = gl_renderer_print_egl_error_state,
-	.sync_post = gl_renderer_sync_post
->>>>>>> origin/weston-imx-5.0
 };

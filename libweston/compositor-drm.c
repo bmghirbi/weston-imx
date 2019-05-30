@@ -76,11 +76,8 @@
 #include "presentation-time-server-protocol.h"
 #include "linux-dmabuf.h"
 #include "linux-dmabuf-unstable-v1-server-protocol.h"
-<<<<<<< HEAD
 #include "linux-explicit-synchronization.h"
-=======
 #include "hdr10-metadata-unstable-v1-server-protocol.h"
->>>>>>> origin/weston-imx-5.0
 
 #ifndef DRM_CLIENT_CAP_ASPECT_RATIO
 #define DRM_CLIENT_CAP_ASPECT_RATIO	4
@@ -189,10 +186,7 @@ enum wdrm_plane_property {
 	WDRM_PLANE_CRTC_ID,
 	WDRM_PLANE_IN_FORMATS,
 	WDRM_PLANE_IN_FENCE_FD,
-<<<<<<< HEAD
-=======
 	WDRM_PLANE_DTRC_META,
->>>>>>> origin/weston-imx-5.0
 	WDRM_PLANE__COUNT
 };
 
@@ -236,10 +230,7 @@ static const struct drm_property_info plane_props[] = {
 	[WDRM_PLANE_CRTC_ID] = { .name = "CRTC_ID", },
 	[WDRM_PLANE_IN_FORMATS] = { .name = "IN_FORMATS" },
 	[WDRM_PLANE_IN_FENCE_FD] = { .name = "IN_FENCE_FD" },
-<<<<<<< HEAD
-=======
 	[WDRM_PLANE_DTRC_META] = { .name = "dtrc_table_ofs" },
->>>>>>> origin/weston-imx-5.0
 };
 
 /**
@@ -249,11 +240,8 @@ enum wdrm_connector_property {
 	WDRM_CONNECTOR_EDID = 0,
 	WDRM_CONNECTOR_DPMS,
 	WDRM_CONNECTOR_CRTC_ID,
-<<<<<<< HEAD
 	WDRM_CONNECTOR_NON_DESKTOP,
-=======
 	WDRM_CONNECTOR_HDR10_METADATA,
->>>>>>> origin/weston-imx-5.0
 	WDRM_CONNECTOR__COUNT
 };
 
@@ -288,11 +276,8 @@ static const struct drm_property_info connector_props[] = {
 		.num_enum_values = WDRM_DPMS_STATE__COUNT,
 	},
 	[WDRM_CONNECTOR_CRTC_ID] = { .name = "CRTC_ID", },
-<<<<<<< HEAD
 	[WDRM_CONNECTOR_NON_DESKTOP] = { .name = "non-desktop", },
-=======
 	[WDRM_CONNECTOR_HDR10_METADATA] = { .name = "HDR_SOURCE_METADATA", },
->>>>>>> origin/weston-imx-5.0
 };
 
 /**
@@ -626,17 +611,14 @@ static const char *const aspect_ratio_as_string[] = {
 	[WESTON_MODE_PIC_AR_256_135] = " 256:135",
 };
 
-<<<<<<< HEAD
 static const char *const drm_output_propose_state_mode_as_string[] = {
 	[DRM_OUTPUT_PROPOSE_STATE_MIXED] = "mixed state",
 	[DRM_OUTPUT_PROPOSE_STATE_RENDERER_ONLY] = "render-only state",
 	[DRM_OUTPUT_PROPOSE_STATE_PLANES_ONLY]	= "plane-only state"
 };
 
-=======
 #if defined(ENABLE_IMXGPU)
 #if defined(ENABLE_OPENGL)
->>>>>>> origin/weston-imx-5.0
 static struct gl_renderer_interface *gl_renderer;
 #endif
 #if defined(ENABLE_IMXG2D)
@@ -1342,7 +1324,6 @@ drm_fb_get_from_dmabuf(struct linux_dmabuf_buffer *dmabuf,
 	if (!fb->bo)
 		goto err_free;
 
-<<<<<<< HEAD
 	fb->width = dmabuf->attributes.width;
 	fb->height = dmabuf->attributes.height;
 	fb->modifier = dmabuf->attributes.modifier[0];
@@ -1381,8 +1362,6 @@ drm_fb_get_from_dmabuf(struct linux_dmabuf_buffer *dmabuf,
 	}
 
 	fb->num_planes = dmabuf->attributes.n_planes;
-=======
->>>>>>> origin/weston-imx-5.0
 	for (i = 0; i < dmabuf->attributes.n_planes; i++) {
 		union gbm_bo_handle handle;
 
@@ -1392,14 +1371,7 @@ drm_fb_get_from_dmabuf(struct linux_dmabuf_buffer *dmabuf,
 		fb->handles[i] = handle.u32;
 	}
 
-<<<<<<< HEAD
 	if (drm_fb_addfb(backend, fb) != 0)
-=======
-add_fb:
-	ret = drm_fb_addfb(fb);
-
-	if (ret != 0)
->>>>>>> origin/weston-imx-5.0
 		goto err_free;
 
 	return fb;
@@ -2554,13 +2526,10 @@ drm_output_apply_state_legacy(struct drm_output_state *state)
 	assert(scanout_state->src_y == 0);
 	assert(scanout_state->dest_x == 0);
 	assert(scanout_state->dest_y == 0);
-<<<<<<< HEAD
 	assert(scanout_state->dest_w == scanout_state->src_w >> 16);
 	assert(scanout_state->dest_h == scanout_state->src_h >> 16);
 	/* The legacy SetCrtc API doesn't support fences */
 	assert(scanout_state->in_fence_fd == -1);
-=======
->>>>>>> origin/weston-imx-5.0
 
 	mode = to_drm_mode(output->base.current_mode);
 	if (backend->state_invalid ||
@@ -2768,14 +2737,10 @@ drm_output_apply_state_atomic(struct drm_output_state *state,
 	int ret = 0;
 	int in_fence_fd = -1;
 
-<<<<<<< HEAD
 	drm_debug(b, "\t\t[atomic] %s output %lu (%s) state\n",
 		  (*flags & DRM_MODE_ATOMIC_TEST_ONLY) ? "testing" : "applying",
 		  (unsigned long) output->base.id, output->base.name);
 
-	if (state->dpms != output->state_cur->dpms) {
-		drm_debug(b, "\t\t\t[atomic] DPMS state differs, modeset OK\n");
-=======
 	if(output->gbm_surface){
 		if(gl_renderer->sync_post(output->base.compositor) == 0) {
 			gbm_surface_set_sync_post(output->gbm_surface, 0);
@@ -2784,8 +2749,8 @@ drm_output_apply_state_atomic(struct drm_output_state *state,
 			gbm_surface_set_sync_post(output->gbm_surface, 1);
 		}
 	}
-	if (state->dpms != output->state_cur->dpms)
->>>>>>> origin/weston-imx-5.0
+	if (state->dpms != output->state_cur->dpms) {
+		drm_debug(b, "\t\t\t[atomic] DPMS state differs, modeset OK\n");
 		*flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
 	}
 
@@ -3031,8 +2996,6 @@ drm_pending_state_apply_atomic(struct drm_pending_state *pending_state,
 		goto out;
 	}
 
-<<<<<<< HEAD
-=======
 	switch (mode) {
 	case DRM_STATE_APPLY_SYNC:
 		break;
@@ -3049,7 +3012,6 @@ drm_pending_state_apply_atomic(struct drm_pending_state *pending_state,
 			drmAuthMagic(b->drm.fd, magic) == 0)) {
 		drmSetMaster(b->drm.fd);
 	}
->>>>>>> origin/weston-imx-5.0
 	ret = drmModeAtomicCommit(b->drm.fd, req, flags, b);
 	drm_debug(b, "[atomic] drmModeAtomicCommit\n");
 
@@ -3711,12 +3673,9 @@ drm_output_prepare_overlay_view(struct drm_output_state *output_state,
 		state->fb = drm_fb_ref(fb);
 
 		if (!drm_plane_state_coords_for_view(state, ev)) {
-<<<<<<< HEAD
 			drm_debug(b, "\t\t\t\t[overlay] not placing view %p on overlay: "
 				     "unsuitable transform\n", ev);
-=======
 			drm_fb_unref(fb);
->>>>>>> origin/weston-imx-5.0
 			drm_plane_state_put_back(state);
 			state = NULL;
 			continue;
@@ -3724,7 +3683,6 @@ drm_output_prepare_overlay_view(struct drm_output_state *output_state,
 		if (!b->atomic_modeset &&
 		    (state->src_w != state->dest_w << 16 ||
 		     state->src_h != state->dest_h << 16)) {
-<<<<<<< HEAD
 			drm_debug(b, "\t\t\t\t[overlay] not placing view %p on overlay: "
 				     "no scaling without atomic\n", ev);
 			drm_plane_state_put_back(state);
@@ -3740,15 +3698,11 @@ drm_output_prepare_overlay_view(struct drm_output_state *output_state,
 		     p->props[WDRM_PLANE_IN_FENCE_FD].prop_id == 0)) {
 			drm_debug(b, "\t\t\t\t[overlay] not placing view %p on overlay: "
 				     "no in-fence support\n", ev);
-=======
-			drm_fb_unref(fb);
->>>>>>> origin/weston-imx-5.0
 			drm_plane_state_put_back(state);
 			state = NULL;
 			continue;
 		}
 
-<<<<<<< HEAD
 		/* We hold one reference for the lifetime of this function;
 		 * from calling drm_fb_get_from_view, to the out label where
 		 * we unconditionally drop the reference. So, we take another
@@ -3757,8 +3711,6 @@ drm_output_prepare_overlay_view(struct drm_output_state *output_state,
 
 		state->in_fence_fd = ev->surface->acquire_fence_fd;
 
-=======
->>>>>>> origin/weston-imx-5.0
 		/* In planes-only mode, we don't have an incremental state to
 		 * test against, so we just hope it'll work. */
 		if (mode == DRM_OUTPUT_PROPOSE_STATE_PLANES_ONLY) {
@@ -4061,15 +4013,12 @@ drm_output_propose_state(struct weston_output *output_base,
 #else
 		if (scanout_fb->width != output_base->current_mode->width ||
 		    scanout_fb->height != output_base->current_mode->height) {
-<<<<<<< HEAD
+#endif
 			drm_debug(b, "\t\t[state] cannot propose mixed mode "
 			             "for output %s (%lu): previous fb has "
 				     "different size\n",
 				  output->base.name,
 				  (unsigned long) output->base.id);
-=======
-#endif
->>>>>>> origin/weston-imx-5.0
 			drm_output_state_free(state);
 			return NULL;
 		}
@@ -4132,9 +4081,7 @@ drm_output_propose_state(struct weston_output *output_base,
 			drm_debug(b, "\t\t\t\t[view] not assigning view %p to plane "
 			             "(no buffer available)\n", ev);
 			force_renderer = true;
-<<<<<<< HEAD
-=======
-		else {
+        } else {
 			struct weston_buffer *buffer = ev->surface->buffer_ref.buffer;
 			dmabuf = linux_dmabuf_buffer_get(buffer->resource);
 			if (dmabuf) {
@@ -4149,7 +4096,6 @@ drm_output_propose_state(struct weston_output *output_base,
 				} else
 					force_renderer = true;
 			}
->>>>>>> origin/weston-imx-5.0
 		}
 
 		/* Ignore views we know to be totally occluded. */
@@ -6112,14 +6058,9 @@ parse_gbm_format(const char *s, uint32_t default_value, uint32_t *gbm_format)
 
 	if (s == NULL) {
 		*gbm_format = default_value;
-<<<<<<< HEAD
-
 		return 0;
 	}
 
-	pinfo = pixel_format_get_info_by_drm_name(s);
-	if (!pinfo) {
-=======
 	else if (strcmp(s, "xrgb8888") == 0)
 		*gbm_format = GBM_FORMAT_XRGB8888;
 	else if (strcmp(s, "argb8888") == 0)
@@ -6129,16 +6070,17 @@ parse_gbm_format(const char *s, uint32_t default_value, uint32_t *gbm_format)
 	else if (strcmp(s, "xrgb2101010") == 0)
 		*gbm_format = GBM_FORMAT_XRGB2101010;
 	else {
->>>>>>> origin/weston-imx-5.0
 		weston_log("fatal: unrecognized pixel format: %s\n", s);
-
 		return -1;
 	}
+	pinfo = pixel_format_get_info_by_drm_name(s);
+	if (!pinfo) {
+	    /* GBM formats and DRM formats are identical. */
+	    *gbm_format = pinfo->format;
 
-	/* GBM formats and DRM formats are identical. */
-	*gbm_format = pinfo->format;
-
-	return 0;
+	    return 0;
+    }
+    return -1;
 }
 
 static uint32_t
@@ -8038,7 +7980,6 @@ static const struct weston_drm_output_api api = {
 	drm_output_set_seat,
 };
 
-<<<<<<< HEAD
 static const struct weston_drm_virtual_output_api virt_api = {
 	drm_virtual_output_create,
 	drm_virtual_output_set_gbm_format,
@@ -8048,7 +7989,6 @@ static const struct weston_drm_virtual_output_api virt_api = {
 	drm_virtual_output_finish_frame
 };
 
-=======
 static void
 hdr10_metadata_destroy(struct wl_client *client,
 			  struct wl_resource *resource)
@@ -8139,7 +8079,6 @@ drm_backend_is_hdr_supported(struct weston_compositor *compositor)
 	return true;
 }
 
->>>>>>> origin/weston-imx-5.0
 static struct drm_backend *
 drm_backend_create(struct weston_compositor *compositor,
 		   struct weston_drm_backend_config *config)
@@ -8314,20 +8253,18 @@ drm_backend_create(struct weston_compositor *compositor,
 				   "support failed.\n");
 	}
 
-<<<<<<< HEAD
 	if (compositor->capabilities & WESTON_CAP_EXPLICIT_SYNC) {
 		if (linux_explicit_synchronization_setup(compositor) < 0)
 			weston_log("Error: initializing explicit "
 				   " synchronization support failed.\n");
-=======
-	if (drm_backend_is_hdr_supported(compositor)) {
+    }
+    if (drm_backend_is_hdr_supported(compositor)) {
 		if (!wl_global_create(compositor->wl_display, &zwp_hdr10_metadata_v1_interface, 1,
 				      compositor, bind_hdr10_metadata)) {
 			weston_log("Error: initializing hdr10 support failed\n");
 		}
 	} else {
 		weston_log("info: HDR is not support\n");
->>>>>>> origin/weston-imx-5.0
 	}
 
 	ret = weston_plugin_api_register(compositor, WESTON_DRM_OUTPUT_API_NAME,
